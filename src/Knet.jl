@@ -113,7 +113,8 @@ include("gcnode.jl");
 include("ops.jl");
 include("unary.jl");            # relu, sigm, invx, elu, selu
 include("binary.jl");           # elementwise broadcasting operations
-include("reduction.jl");        # sum, max, mean, etc.
+include("reduction.jl");        # sum, max, etc.
+include("statistics.jl");       # mean, std, var, stdm, varm
 include("linalg.jl");           # mat # matmul, axpy!, transpose, (i)permutedims
 include("bmm.jl");              # bmm # matmul, axpy!, transpose, (i)permutedims
 include("conv.jl");             # conv4, pool, deconv4, unpool
@@ -149,11 +150,17 @@ dir(path...) = joinpath(dirname(@__DIR__),path...)
 # See if we have a gpu at initialization:
 function __init__()
     try
-        r = gpu(true)
-        #@info(r >= 0 ? "Knet using GPU $r" : "No GPU found, Knet using the CPU")
+        dev = gpu(true)
+        if dev >= 0
+            CuArrays.usage_limit[] = gpufree() - 100_000_000
+            AutoGrad.set_gc_function(knetgcnode)
+            @debug "Knet using GPU $dev"
+        else
+            @debug "No GPU found, Knet using the CPU"
+        end
     catch e
         gpu(false)
-        #@warn("Knet using the CPU: $e")
+        @warn "Knet cannot use the GPU: $e"
     end
 end
 

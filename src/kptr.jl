@@ -1,3 +1,5 @@
+cuallocator()=true      # set to true to use the CuArrays allocator, false to use Knet allocator
+
 # KnetPtr type holds a gpu allocated pointer.  We try to minimize the number of actual
 # allocations, which are slow, by reusing preallocated but garbage collected pointers.
 
@@ -5,40 +7,48 @@ mutable struct KnetPtr
     ptr                         # actual pointer, removed type ::Cptr for serialization
     len::Int                    # size in bytes
     dev::Int                    # id of the device the pointer belongs to
-    parent::KnetPtr             # used to implement shared memory pointers
+    parent	                # used to implement shared memory pointers
+end
 
-    # This is the low level KnetPtr constructor, it adds the finalizer and
-    # does not assign parent which is only needed for shared pointers.
+# This is the low level KnetPtr constructor, it adds the finalizer and does not assign
+# parent which is only needed for shared pointers.
 
-    function KnetPtr(ptr::Cptr,len::Int,dev::Int)
-        kp = new(ptr,len,dev)
-        finalizer(freeKnetPtr, kp)
-    end
+function KnetPtr(ptr::Cptr,len::Int,dev::Int)
+    kp = KnetPtr(ptr,len,dev,nothing)
+    finalizer(freeKnetPtr, kp)
+end
 
-    # This constructor is used to create a shared pointer.  We need to
-    # keep the parent field to prevent premature gc of the parent.  The
-    # child does not need a special finalizer.
+# This constructor is used to create a shared pointer.  We need to keep the parent field to
+# prevent premature gc of the parent.  The child does not need a special finalizer.
 
-    function KnetPtr(parent::KnetPtr, offs::Int, len::Int)
-        if len < 0 || offs < 1 || offs+len-1 > parent.len; throw(BoundsError()); end
-        new(parent.ptr+offs-1, len, parent.dev, parent)
-    end
+function KnetPtr(parent::KnetPtr, offs::Int, len::Int)
+    if len < 0 || offs < 1 || offs+len-1 > parent.len; throw(BoundsError()); end
+    KnetPtr(parent.ptr+offs-1, len, parent.dev, parent)
+end
 
-    # This one is used by serialize:
-    KnetPtr(ptr::Array{UInt8},len::Int)=new(ptr,len,-1)
-
+# This one is used by serialize:
+function KnetPtr(ptr::Array{UInt8},len::Int)
+    KnetPtr(ptr, len, -1, nothing)
 end
 
 # When Julia gc reclaims a KnetPtr object, the following special finalizer does not actually
 # release the memory, but inserts it back in the appropriate pool for reuse.
 
 function freeKnetPtr(p::KnetPtr)
-    if p.ptr == C_NULL || isdefined(p,:parent); return; end
-    mem = KnetMems[p.dev+1]
-    mem.bfree += p.len
-    mem.kfree += 1
-    push!(mem.pools[p.len].free, p.ptr)
-    p.ptr = C_NULL # to avoid double free by gcnode then gc.
+    if p.ptr == C_NULL
+        # already freed, do nothing
+    elseif p.parent isa KnetPtr
+        # subarray, do nothing
+    elseif p.parent isa Nothing
+        @dbg (push!(arraysizes,-p.len); push!(blocksizes,-p.len))
+        mem = KnetMems[p.dev+1]
+        mem.bfree += p.len
+        mem.kfree += 1
+        push!(mem.pools[p.len].free, p.ptr)
+        p.ptr = C_NULL # to avoid double free by gcnode then gc.
+    else
+        freeKnetPtrCu(p)
+    end
 end
 
 # We use the KnetPool type to keep track of allocated and garbage collected pointers: We
@@ -94,6 +104,7 @@ gc_interval() = 2*10^8  # gc interval in ns, optimized on seq2seq model, balanci
 putc(c)=nothing         # putc(c)=print(c) to observe GC.gc, Knet.gc and inclimit
 
 function KnetPtr(arraybytes::Int)
+    cuallocator() && return KnetPtrCu(arraybytes)
     dev = gpu(); @assert dev >= 0 "KnetPtr: bad device id $dev."
     mem = knetmem(dev)
     blockbytes = blocksize(arraybytes)
@@ -142,7 +153,7 @@ end
 
 function reuse(mem, pool, blockbytes, dbg; trygc=false)
     if trygc
-        @timeit to "gc" GC.gc()
+        if TIMER; @timeit to "gc" GC.gc(); end
         mem.gctime = time_ns(); mem.gc += 1
     end
     if !isempty(pool.free)
@@ -257,4 +268,5 @@ KnetPtr: ktotal: $(x[1]) kavail: $(x[2]) ktotal-kavail: $(x[1]-x[2])
 nused-ktotal: $(m[3]-x[1])
 """)
 end
+
 

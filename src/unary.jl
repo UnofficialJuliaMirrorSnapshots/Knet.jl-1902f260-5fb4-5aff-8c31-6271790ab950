@@ -126,14 +126,26 @@ broadcasted(::typeof(+), a::KnetArray)=a
 # Identity: Issue #335
 broadcasted(::typeof(identity), a::KnetArray)=a
 
-for f in unary_ops
-    if !isa(f,Tuple); f=(f,); end
-    unary_op(f...)
-end
+# TODO: SpecialFunctions loggamma update #486.
+# SpecialFunctions 0.8: lgamma(x::Real)` is deprecated, use `(logabsgamma(x))[1]` instead. 
+# Other alternative is loggamma, throws a DomainError if gamma(x) is negative.
+# However neither are equivalent to cuda lgamma.
+# commenting this out until we implement a better solution.
+# if !isdefined(SpecialFunctions, :loggamma) && isdefined(SpecialFunctions, :lgamma)
+#     loggamma(x) = lgamma(x)
+# end
+# if isdefined(SpecialFunctions, :loggamma) && !isdefined(SpecialFunctions, :lgamma)
+#     lgamma(x) = loggamma(x)
+# end
+# if isempty(methods(loggamma,(AutoGrad.Value,))) # Should be fixed after AutoGrad 1.1.4
+#     @primitive loggamma(x),dy,y (dy.*(digamma.(x)))
+# end
 
 # Unbroadcasted zero works on arrays: this moved to karray.jl
 # import Base: zero
 # zero(x::KnetArray)=zero.(x)
 
-# `lgamma` deprecated, using loggamma. TODO: move this to AutoGrad
-@primitive loggamma(x),dy,y (dy.*(digamma.(x)))
+for f in unary_ops
+    if !isa(f,Tuple); f=(f,); end
+    unary_op(f...)
+end

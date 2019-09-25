@@ -2,7 +2,8 @@
 
 if find_cuda_library("cuda", tk) != nothing # has_cuda()
     try
-        import CuArrays: CuArray, CuPtr
+        using CuArrays: CuArrays, CuPtr, unsafe_free!, usage_limit
+        import CuArrays: CuArray
     catch ex
         @warn "CUDA is installed, but CuArrays.jl fails to load" exception=(ex,catch_backtrace())
     end
@@ -52,10 +53,10 @@ end
 permutedims(x::KnetMatrix)=_transpose(x)          # cuDNN is %10 slower but no startup cost
 permutedims(x::KnetVector)=copy(reshape(x,1,:))
 
-# TODO: delete this when fixed in AutoGrad:
-# if isempty(methods(permutedims, (AutoGrad.Value,))) # this does not work, it matches permutedims(x,d...)
-@primitive permutedims(x),dy  reshape(permutedims(dy),size(x)) # need reshape for vectors
-#end
+# TODO: delete this when fixed in AutoGrad (after 1.1.4):
+if first(methods(permutedims, (AutoGrad.Value,))).nargs == 3 # old AutoGrad has permutedims(x,d...)
+    @primitive permutedims(x),dy  reshape(permutedims(dy),size(x)) # need reshape for vectors
+end
 
 using Base: dims2cat, cat_shape, __cat
 
@@ -88,3 +89,35 @@ end
 #     KnetArray{T,N}(k, size(x))
 # end
 
+
+# Testing the CuArrays allocator: set Knet.cuallocator()=true to use this
+function KnetPtrCu(len::Int)
+    c = CuArray{UInt8}(undef, len)
+    p = convert(Cptr, convert(Int, c.buf.ptr))
+    KnetPtr(p, len, gpu(), c)
+end
+
+function freeKnetPtrCu(p::KnetPtr)
+    if p.parent isa CuArray
+        unsafe_free!(p.parent)
+        p.ptr = C_NULL
+        p.parent = nothing
+    else
+        error("Bad parent pointer $(p.parent)")
+    end
+end
+
+# argmax, argmin etc. Fixes https://github.com/denizyuret/Knet.jl/issues/368.
+# Two options: argmax(Array(KnetArray)) vs argmax(CuArray)
+# Experiments: 10x10, 100x100, 1000x1000 with no dims, dims=1, dims=2
+# With no dims, CuArrays is better for 100x100, 1000x1000.
+# With all others, KnetArray is better.
+
+import Base: argmax, argmin, findmax, findmin
+# TODO: try this again after https://github.com/JuliaGPU/CuArrays.jl/issues/304 is resolved
+# argmaxarray(x,d)=((d===:) && length(x) > 4096 ? CuArray(x) : Array(x))
+argmaxarray(x,d)=Array(x)
+argmax(x::KnetArray; dims=:)=argmax(argmaxarray(x,dims); dims=dims)
+argmin(x::KnetArray; dims=:)=argmin(argmaxarray(x,dims); dims=dims)
+findmax(x::KnetArray; dims=:)=findmax(argmaxarray(x,dims); dims=dims)
+findmin(x::KnetArray; dims=:)=findmin(argmaxarray(x,dims); dims=dims)
