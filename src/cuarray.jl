@@ -1,6 +1,6 @@
 # This is from https://github.com/JuliaGPU/CUDAapi.jl/pull/84/files
 
-if find_cuda_library("cuda", tk) != nothing # has_cuda()
+if has_cuda()
     try
         using CuArrays: CuArrays, CuPtr, unsafe_free!, usage_limit
         import CuArrays: CuArray
@@ -121,3 +121,25 @@ argmax(x::KnetArray; dims=:)=argmax(argmaxarray(x,dims); dims=dims)
 argmin(x::KnetArray; dims=:)=argmin(argmaxarray(x,dims); dims=dims)
 findmax(x::KnetArray; dims=:)=findmax(argmaxarray(x,dims); dims=dims)
 findmin(x::KnetArray; dims=:)=findmin(argmaxarray(x,dims); dims=dims)
+
+
+# Issue #108:Element-wise power of KnetArray give NaN results #108
+# This is a bug with CUDA giving NaN for integer powers of negative numbers (powf is broken)
+
+import Base.Broadcast: broadcasted
+
+function broadcasted(::typeof(^),a::KnetArray{T},s::Number) where T
+    b = similar(a)
+    ca = CuArray(a)
+    cb = CuArray(b)
+    cb .= ca .^ T(s)
+    return b
+end
+
+function broadcasted(::typeof(^),s::Number,a::KnetArray{T}) where T
+    b = similar(a)
+    ca = CuArray(a)
+    cb = CuArray(b)
+    cb .= T(s) .^ ca
+    return b
+end

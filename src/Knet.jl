@@ -103,7 +103,9 @@ export		# ref:reference.md tut:tutorial
     #@zerograd, # ref, use AutoGrad.@zerograd
     zeroone	# ref, tut
 
-using AutoGrad
+using AutoGrad, Pkg
+const AUTOGRAD_VERSION = (isdefined(Pkg.API,:__installed) ? Pkg.API.__installed()["AutoGrad"] : Pkg.dependencies()[Base.UUID("6710c13c-97f1-543f-91c5-74e8f7d95b35")].version)
+
 include("gpu.jl");              # gpu
 include("uva.jl")
 include("kptr.jl");
@@ -163,6 +165,7 @@ function __init__()
         @warn "Knet cannot use the GPU: $e"
     end
 end
+
 
 # @use X,Y,Z calls using on packages installing them if necessary. (WIP)
 # 1. still need "using Knet"
