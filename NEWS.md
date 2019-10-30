@@ -1,3 +1,12 @@
+Knet v1.3.0 Release Notes
+=========================
+
+* Fixed #506: RNN serialization and gc issues.
+* Fixed #509: Default output for progress is now stderr.
+* Solved curand out of memory problem.
+* Added NCE chapter to docs.
+
+
 Knet v1.2.7 Release Notes
 =========================
 9fe1e03 2019-09-29
